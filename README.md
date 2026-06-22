@@ -419,7 +419,7 @@ pytest
 
 ## Stretch Goals
 
-These are optional if the intern finishes the core project early.
+These are optional if you finish the core project early.
 
 ### 1. Real-Time Monitoring
 
