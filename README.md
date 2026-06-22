@@ -23,14 +23,6 @@ This project should be defensive only. It should not modify, delete, encrypt, or
 
 ---
 
-## Why This Project Matters
-
-File integrity monitoring is used in cybersecurity to detect unauthorized changes to important files. For example, if a system configuration file, website file, script, or executable changes unexpectedly, that may indicate misconfiguration, unauthorized access, or malware activity.
-
-This project gives practical experience with concepts used in tools such as Tripwire, OSSEC/Wazuh, and endpoint monitoring platforms.
-
----
-
 ## Suggested Tech Stack
 
 - Python 3.10+
