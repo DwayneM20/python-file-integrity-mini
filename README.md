@@ -207,6 +207,51 @@ Build the first version of the script that can calculate a SHA-256 hash for one 
 - Return the SHA-256 hash
 - Handle missing files gracefully
 
+### Steps
+
+1. Import `hashlib` and `pathlib`.
+2. Create a fresh SHA-256 hash object.
+3. Open the file in **binary** mode (`"rb"`), not text mode.
+4. Read the file in a loop, one fixed-size chunk at a time (e.g. 8192 bytes).
+5. Feed each chunk into the hash object as you read it.
+6. After the loop ends, return the hexadecimal digest.
+7. Wrap the file access so a missing or unreadable file fails cleanly instead of crashing.
+
+### Hints
+
+- Why binary mode? Text mode can rewrite line endings (`\r\n` vs `\n`), which changes the hash across platforms. Binary keeps it stable.
+- Why chunks? A multi-GB file should not be loaded into RAM all at once. Chunking keeps memory flat no matter the file size.
+- `hexdigest()` returns a string like `"abc123..."`; `digest()` returns raw bytes. The baseline JSON wants the string.
+- Calling `.update()` several times is the same as hashing the concatenation of all the pieces — that's exactly why chunking is safe.
+
+### Related Snippets
+
+```python
+import hashlib
+
+# Several updates == hashing the whole input at once
+h = hashlib.sha256()
+h.update(b"hello ")
+h.update(b"world")
+print(h.hexdigest())
+```
+
+```python
+# Read a binary file in fixed-size chunks until it's empty
+CHUNK = 8192
+with open(path, "rb") as f:
+    for chunk in iter(lambda: f.read(CHUNK), b""):
+        ...  # what should happen with each chunk?
+```
+
+```python
+# Fail gracefully on files you can't read
+try:
+    ...
+except (FileNotFoundError, PermissionError) as exc:
+    ...  # skip it? log it? re-raise? your call
+```
+
 ### Deliverable
 
 A function similar to:
@@ -240,6 +285,51 @@ Scan an entire directory and collect metadata for every file.
   - File size
   - Last modified timestamp
 
+### Steps
+
+1. Pick a traversal tool: `pathlib.Path.rglob("*")` or `os.walk()`.
+2. For each entry, keep only the ones that are actually files (skip directories).
+3. Skip anything inside an ignored folder.
+4. Turn each absolute path into a path *relative to* the scan root.
+5. For each file, gather its hash (reuse `hash_file` from Milestone 1), size, and last-modified time.
+6. Build a dictionary keyed by the relative path string, with the metadata as the value.
+
+### Hints
+
+- Store paths as POSIX strings (`p.as_posix()`) so a baseline made on Windows still matches on Linux/macOS (`\` vs `/`).
+- `p.stat()` gives you both size (`.st_size`) and modified time (`.st_mtime`) in one call.
+- `.st_mtime` is a float (seconds since epoch). Convert it to something human-readable for the JSON.
+- `os.walk` lets you prune ignored folders *before* descending into them, which is faster than filtering afterward.
+
+### Related Snippets
+
+```python
+from pathlib import Path
+
+root = Path("./sample_files")
+for p in root.rglob("*"):
+    if p.is_file():
+        rel = p.relative_to(root).as_posix()
+        size = p.stat().st_size
+        ...
+```
+
+```python
+import os
+
+IGNORE = {".git", "venv", "__pycache__", "node_modules"}
+for dirpath, dirnames, filenames in os.walk(root):
+    dirnames[:] = [d for d in dirnames if d not in IGNORE]  # prune in place
+    ...
+```
+
+```python
+from datetime import datetime
+
+# Turn an epoch mtime into a readable ISO timestamp
+iso = datetime.fromtimestamp(p.stat().st_mtime).isoformat()
+```
+
 ### Deliverable
 
 A function similar to:
@@ -270,6 +360,49 @@ Create a trusted baseline file.
 - Include timestamp and root path
 - Create the output folder if it does not exist
 
+### Steps
+
+1. Set up `argparse` with subcommands so the tool can grow (`baseline` now, `scan` later).
+2. For the `baseline` command, accept `--path` and `--output` arguments.
+3. Call `scan_directory(...)` from Milestone 2 to gather the file data.
+4. Wrap that data in the baseline shape: `created_at`, `root_path`, and `files` (see **Baseline File Format** above).
+5. Make sure the output folder exists before writing.
+6. Write the dictionary to disk as nicely formatted JSON.
+
+### Hints
+
+- `add_subparsers(dest="command")` lets you check `args.command == "baseline"` to decide what to run.
+- Everything you write must be JSON-serializable — a `Path` or a raw `datetime` object will raise; convert to `str` first.
+- `Path.mkdir(parents=True, exist_ok=True)` creates the folder and won't error if it already exists.
+- `datetime.now().isoformat()` is a clean value for `created_at`.
+
+### Related Snippets
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser()
+sub = parser.add_subparsers(dest="command")
+
+b = sub.add_parser("baseline")
+b.add_argument("--path", required=True)
+b.add_argument("--output", required=True)
+
+args = parser.parse_args()
+if args.command == "baseline":
+    ...
+```
+
+```python
+import json
+from pathlib import Path
+
+out = Path(args.output)
+out.parent.mkdir(parents=True, exist_ok=True)
+with out.open("w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+```
+
 ### Example Command
 
 ```bash
@@ -298,6 +431,47 @@ Detect:
 - Deleted files: files present in the baseline but missing now
 - Modified files: files where the SHA-256 hash changed
 
+### Steps
+
+1. Load the saved baseline JSON from disk.
+2. Run a fresh `scan_directory(...)` on the current state of the folder.
+3. Compare the two sets of file paths (the dictionary keys).
+4. **New** = paths in the current scan but not in the baseline.
+5. **Deleted** = paths in the baseline but not in the current scan.
+6. **Modified** = paths in *both*, but whose `sha256` value differs.
+
+### Hints
+
+- `dict.keys()` behaves like a set, so you can use `-` (difference) and `&` (intersection) directly on them.
+- Compare the **hash** to decide "modified" — not size or mtime. A file can be touched without its contents changing; the hash is the source of truth.
+- Decide up front what should happen if the baseline file is missing or corrupt — catch `json.JSONDecodeError` and `FileNotFoundError`.
+
+### Related Snippets
+
+```python
+baseline_files = baseline["files"]
+current_files = current_scan["files"]
+
+new     = current_files.keys() - baseline_files.keys()
+deleted = baseline_files.keys() - current_files.keys()
+common  = current_files.keys() & baseline_files.keys()
+
+modified = [
+    path for path in common
+    if current_files[path]["sha256"] != baseline_files[path]["sha256"]
+]
+```
+
+```python
+import json
+
+try:
+    with open(baseline_path, encoding="utf-8") as f:
+        baseline = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError) as exc:
+    ...  # handle a missing or broken baseline gracefully
+```
+
 ### Example Command
 
 ```bash
@@ -325,6 +499,41 @@ Make scan results easy to read and share.
 - Show counts of new, modified, and deleted files
 - List affected file paths
 - Add optional JSON report export
+
+### Steps
+
+1. Build a `summary` dictionary with the three counts.
+2. Print the summary, then each section (new / modified / deleted) with its file list.
+3. If a `--report` path was provided, write the full result to JSON (see **Scan Report Format** above).
+4. Sort the file lists before printing/saving so the output is stable and predictable.
+
+### Hints
+
+- Wrap the comparison results in a function that *returns data*, and keep printing in a separate function. That way you can test the logic without capturing console output.
+- `sorted(...)` your lists so two runs on the same state produce identical output — much easier to test and diff.
+- Consider returning a non-zero exit code when changes are found. Automation and CI pipelines watch the exit code to know "something changed."
+
+### Related Snippets
+
+```python
+summary = {
+    "new_files": len(new),
+    "modified_files": len(modified),
+    "deleted_files": len(deleted),
+}
+
+print("New Files:")
+for path in sorted(new):
+    print(f"- {path}")
+```
+
+```python
+import sys
+
+# Signal "changes detected" to the shell / CI
+if any([new, modified, deleted]):
+    sys.exit(1)
+```
 
 ### Example Terminal Output
 
@@ -379,6 +588,42 @@ Example:
 }
 ```
 
+### Steps
+
+1. Add an optional `--config` argument that points at a JSON config file.
+2. If given, load the config; otherwise fall back to defaults.
+3. Decide a clear precedence order for settings.
+4. Apply `ignore_dirs` during traversal and `ignore_extensions` when deciding whether to hash a file.
+
+### Hints
+
+- Pick one precedence rule and stick to it: explicit CLI flag > config file value > built-in default. Document it.
+- The tool must still work with **no** config file — config is a convenience, not a requirement.
+- `Path(name).suffix` gives the extension (including the dot, e.g. `".log"`), which lines up with `ignore_extensions`.
+- Turning the ignore lists into `set`s makes the membership checks fast and clean.
+
+### Related Snippets
+
+```python
+import json
+
+config = {}
+if args.config:
+    with open(args.config, encoding="utf-8") as f:
+        config = json.load(f)
+
+# CLI flag wins, then config, then a default
+scan_path  = args.path or config.get("scan_path")
+ignore_ext = set(config.get("ignore_extensions", []))
+```
+
+```python
+from pathlib import Path
+
+if Path(filename).suffix in ignore_ext:
+    continue  # skip this file
+```
+
 ### Acceptance Criteria
 
 - User can run the tool with a config file
@@ -402,6 +647,38 @@ Add automated tests for the main logic.
 - Modified files are detected
 - Ignored directories are skipped
 - Invalid baseline files are handled gracefully
+
+### Steps
+
+1. Create `tests/test_fim.py` and import the functions you want to test.
+2. Use pytest's `tmp_path` fixture so each test gets a clean, throwaway folder.
+3. Create files inside `tmp_path`, run your function, and assert on the result.
+4. Follow Arrange → Act → Assert: set up the files, call the function, check the outcome.
+
+### Hints
+
+- `tmp_path` is a `Path` that pytest creates fresh per test, so your tests never touch real folders or hardcode machine-specific paths.
+- `Path.write_text(...)` is the quickest way to create and later change a test file's contents.
+- Test the data, not the print output — assert on what your scan/compare functions *return*.
+- To test "modified," write a file, hash it, change it, hash again, and assert the two hashes differ.
+
+### Related Snippets
+
+```python
+def test_same_content_same_hash(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("data")
+    assert hash_file(f) == hash_file(f)
+```
+
+```python
+def test_hash_changes_when_content_changes(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("hello")
+    first = hash_file(f)
+    f.write_text("hello!")
+    assert hash_file(f) != first
+```
 
 ### Example Command
 
