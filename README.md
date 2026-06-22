@@ -2,8 +2,6 @@
 
 A small defensive cybersecurity project that monitors a directory for unexpected file changes. The tool creates a trusted baseline of file hashes, then compares future scans against that baseline to detect modified, deleted, or newly added files.
 
-This project is intended as an intern-friendly Python project that teaches hashing, filesystem traversal, secure baselining, reporting, and basic security monitoring.
-
 ---
 
 ## Project Goals
